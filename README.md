@@ -20,3 +20,5 @@ Datasets and RMarkdown for Anthopleura elegantissima (Aele) carbonic anhydrase (
 [9] fc_ab.csv: Dataset of transcript fold change and abundance from Aele CA gene expression symbiotic state experiment
 
 [10] foldchangecontrols.csv: MCMCqPCR dataset of transcripts fold changes from Aele CA gene expression symbiotic state experiment
+
+[11] Putative carbonic anhydrases identified from aposymbiotic Anthopleura elegantissima transcriptome.txt: fasta file of 50 putative carbonic anhydrases identified from aposymbiotic Anthopleura elegantissima transcriptome
