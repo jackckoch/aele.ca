@@ -1,0 +1,898 @@
+---
+title: "Carbonic Anhydrase Manuscript"
+author: "Jack C. Koch"
+date: "8/21/2019"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+____________________________________________________________________________________________________________________________________
+
+This is the part of the script that calculates and plots the primer efficiency (as percentage) for each primer used in the qPCR experiment
+
+1. Concentration of cDNA in qPCR reaction = DNA
+
+2. Gene of interest = Genes
+
+3. Crossing threshold = Ct
+
+```{r EfficiencyCalculations, include=TRUE}
+setwd("~/Documents/0_Oregon_State_University/1_Research/Anthopleura elegantissima/Carbonic Anhydrase/CA Manuscript/CA_Manuscript/R Files")
+
+#Internal Note: Data combined from E6 and E7 reactions
+ef<-read.csv("EfficiencyCalc_Koch_CAManuscript.csv", header=T)
+head(ef)
+tail(ef)
+print(ef) #prints all data
+ef <- ef[ef$DNA<25,] #excludes cDNA concentrations greater than 25 ng/µl
+head(ef)
+genes<-levels(factor(ef$Genes))
+concs<-levels(factor(ef$DNA))
+
+#par(mfrow=c(3,2)) #output is 3 rows bby 2 columns
+
+for (g in genes) #for each gene
+	{
+	mvec<-c()
+	for (c in concs) #for each technical triplicate reactions per concentration
+		{
+		meani<-mean(ef[ef$Gene==g & ef$DNA==c,]$Ct) #calculate the mean Ct
+		mvec<-append(mvec,meani) #add the mean Ct to a new column called 'mvec'
+		}
+	plot(mvec~log2(as.numeric(concs))) #plot average Ct against log2 of the concentration
+	abline(lm(mvec~log2(as.numeric(concs)))) #add a linear model
+	slopei<-lm(mvec~log2(as.numeric(concs)))$coefficients[2] #calculate the slope of linear model
+	effi<-((2^(-1/slopei))-1) #calcule the effificency and express as percentage
+	rsq <- summary(lm(mvec~log2(as.numeric(concs))))$r.squared #extract R^2 value from summary of abline
+	mtext(round(effi,3), side=1, line=-2) #add efficency percentage calculation as text (first number above the x-axis)
+	mtext(g, side=3, line=-2) #add gene name as text
+	mtext(round(rsq,3), side=1, line=2) #add R^2 as text (number below the x-axis)
+	mtext(round(slopei,3), side=1, line=-4) #add slope for each line (top number)
+}
+```
+
+____________________________________________________________________________________________________________________________________
+
+This is the part of the script that analyzes the CA activity data from the symbiotic state experiment.
+
+1. Symbiotic state = Sym
+
+2. Light intensity (µmol photons per m^2*s^1) = Light..µmol.m..2.s..1.)
+
+3. Collection colony = Colony
+
+4. Total soluble protein (mg/ml) = X.Protein...mg.mL.
+
+5. Carbonic anhydrase = CA2
+
+6. Carbonic anhydrase activity = CA.Activity.2
+
+7. Algal density (cells/mg host protein) = Algal.Density..cell.mg.protein.
+
+```{r Symbiotic State CA Activity, include=TRUE}
+setwd("~/Documents/0_Oregon_State_University/1_Research/Anthopleura elegantissima/Carbonic Anhydrase/CA Manuscript/CA_Manuscript/R Files")
+library("car")
+library("multcomp")
+library("grid")
+library("ggplot2")
+library("plotly")
+library("reshape2")
+library("gplots")
+library("FSA")
+library("lattice")
+library("rcompanion")
+library("multcompView")
+
+#Prepare the data
+GBW <- read.csv("CAActivity_Sym_Koch_CAManuscript.csv",header=TRUE) #reads in dataframe
+GBW$logCA <- log(GBW$CA.Activity.2) #calculates log(CA) from CA Activity and places in a new column
+GBW$color[GBW$Sym=="W"] <- "tan" #instructs R to associate "W" with the color "tan"
+GBW$color[GBW$Sym=="G"] <- "seagreen3" #instructs R to associate "G" with the color "seagreen3"
+GBW$color[GBW$Sym=="B"] <- "sienna3" #instructs R to associate "B" with the color "sienna3"
+
+#Inspect the data
+Summarize(CA.Activity.2~Sym,data=GBW) #summary table for GBW CA Activity
+histogram(~ CA.Activity.2 | Sym,data=GBW,layout=c(1,3)) #white and brown look a bit skewed
+histogram(~ logCA | Sym,data=GBW,layout=c(1,3)) #helps the look of normality a bit; brown still skewed
+
+#Statistical assumptions
+#Q-Q Plot (Normality)
+qqnorm(GBW$CA.Activity.2)
+qqline(GBW$CA.Activity.2) #normality plot doesn't look great
+qqplot(GBW$CA.Activity.2,GBW$Sym)
+
+#Shapiro-Wilks test for normality
+shapiro.test(GBW$CA.Activity.2) #p = 0.002, data not normal
+shapiro.test(GBW$logCA) #p = 0.03, data not normal, use non-parametric and parametric stats
+
+#Levene's test for homogeneity of variance
+leveneTest(CA.Activity.2~Sym, data = GBW)
+#Reject null, p = 0.8276, variances equal, use non-transformed data for stats.
+
+#Non-parametric statistics
+kruskal.test(CA.Activity.2~Sym, data=GBW) #p < 0.001
+dunnkw <- dunnTest(CA.Activity.2~Sym, data=GBW, method="bh")
+dunnkw #Dunn test for multiple comparisons G-B and W-B p < 0.001 and W-G p = 0.15
+
+#Parametric statistics
+caaov <- aov(CA.Activity.2~Sym,data=GBW) #ANOVA
+summary(caaov) #p < 0.001
+TukeyHSD(caaov) #Tukey's HSD G-B and W-B p = 0 and W-G p = 0.18
+
+#Graphs
+levels(GBW$Sym) #check order of categories for x-axis
+plot.means <- function(x) { 
+  m <- mean(x)
+  c(y = m, ymin = m, ymax = m)
+} #function for calculating means for each group
+
+#graph CA activity against symbiotic state
+GBW_CA <- subset(GBW, select = c(CA.Activity.2, Sym)) #subset data frame to just include sym state and CA activity
+SymState_CAactivity <- ggplot(GBW_CA, aes(x=Sym, y=CA.Activity.2))
+SymState_CAactivity <- SymState_CAactivity + geom_dotplot(aes(fill=as.factor(Sym)), 
+                 stackdir = "center", binaxis = "y", binwidth = 0.025, 
+                 stackratio = 1.5, position = "dodge") +
+  labs(x = "", y = "Carbonic Anhydrase Activity [-change ph/min/mg soluble animal protein]") +
+  guides(fill=FALSE) +
+  theme(axis.title.y = element_text(size = 12), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,1.1,0.2)) +
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) +
+  scale_fill_manual(values=c("sienna3","seagreen3","white")) +
+  annotate("text",x=0.99,y=1.02,label="a",size=8) +
+  annotate("text",x=1.99,y=0.66,label="b",size=8) +
+  annotate("text",x=2.99,y=0.56,label="b",size=8) +
+  annotate("text",x=1,y=0,label="n=10",size=6) +
+  annotate("text",x=2,y=0,label="n=10",size=6) +
+  annotate("text",x=3,y=0,label="n=10",size=6)
+SymState_CAactivity
+
+#graph CA activity against algal density
+GBW_CA_A <- subset(GBW, select = c(CA.Activity.2, Algal.Density..cell.mg.protein.,Sym)) #subset data frame to just include sym state, algal density, and CA activity
+SymState_CAactivity_Algaldensity <- ggplot(GBW_CA_A,aes(x=Algal.Density..cell.mg.protein.,y=CA.Activity.2)) #CA Activity and Algal Density
+SymState_CAactivity_Algaldensity <- SymState_CAactivity_Algaldensity + geom_point(aes(color=Sym)) + scale_colour_manual(values=c("sienna3","seagreen3","tan")) +
+  labs(x = "Algal Density [cells/mg soluble animal protein]", y = "Carbonic Anhydrase Activity [-change ph/min/mg soluble animal protein]") +
+  guides(fill=FALSE) +
+  theme(axis.title.y = element_text(size = 12), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,1.1,0.2)) +
+  geom_smooth(aes(group = Sym), method="lm",size=1,se=T) #adds linear model with standard error predictions to each symbiotic state
+SymState_CAactivity_Algaldensity
+
+```
+
+____________________________________________________________________________________________________________________________________
+
+This is the part of the script that analyzes the CA gene expression data from the symbiotic state experiment.
+
+1. Sample = sample
+
+2. Symbiotic state = tr
+
+3. AeleCA6 Ct = sec404.2
+
+4. AeleCA9 Ct = secmb2502
+
+5. AeleCA4 Ct = mb34611
+
+6. AeleCA1 Ct = cytoweis
+
+7. G3PD Ct = g3pd
+
+8. NADH Ct = nadh
+
+9. Nanodrop 260/280 = x280
+
+10. Nanodrop 260/230 = x230
+
+11. Symbiotic state brown (hosting Breviolum muscatinei) = S
+
+12. Symbiotic state green (hosting Elliptochloris marina) = G
+
+13. Symbiotic state white or aposymbiotic = control
+
+14. Number of transcripts = count
+
+```{r Symbiotic State CA Gene Expression, include=TRUE}
+setwd("~/Documents/0_Oregon_State_University/1_Research/Anthopleura elegantissima/Carbonic Anhydrase/CA Manuscript/CA_Manuscript/R Files")
+
+#Load packages
+library('reshape2')
+library('dplyr')
+library('ggplot2')
+library('MCMC.qpcr')
+library('psych')
+
+#Load data
+data <- read.csv("CAExpression_Sym_Koch_CAManuscript.data.csv",header=TRUE) #read in qPCR data
+eff <- read.csv("CAExpression_Sym_Koch_CAManuscript.eff.csv",header=TRUE) #read in primer efficency data (substract 1 from each value to convert to percentage)
+head(data)
+data
+eff
+
+#Specify columns with gene data
+gcol=3:8
+
+#Specify columns with experiment setup data
+ccol=c(1,2)
+
+#Convert the Ct values to transcript count values (count)
+qs=cq2counts(data=data,genecols = gcol,condcols = ccol,effic = eff,Cq1=39) #We used 39 Ct as our value for 1 transcript, but this is not verified with the machine we used.
+qs$tr=relevel(qs$tr,ref="control") #Set aposymbiotic (listed as control) as our control treatment that we will compare brown and green to.
+qs
+
+#Fitting a naive model without controls
+naive=mcmc.qpcr(
+  fixed="tr",
+  data=qs,
+  pr=T,
+  pl=T
+)
+
+summary(naive)
+
+diagnostic.mcmc(model=naive,col="grey50",cex=0.8)
+
+#summary plot for inferred abundances
+s2=HPDsummary(model=naive,data=qs,relative=FALSE)
+s2$summary
+
+#Summary plot for fold-changes relative to the global control
+s3=HPDsummary(model=naive,data=qs,relative=TRUE)
+s3$summary
+
+#pairwise difference and their significance for each gene
+s3$geneWise
+
+#Now we will fit an informed model telling the program what our control genes are (NADH and G3PD). We will also account for the variation in the control genes between our symbiotic states.
+
+#Fitting a naive model with controls
+informed=mcmc.qpcr(
+  fixed="tr",
+  data=qs,
+  controls=c("g3pd","nadh"),
+  pr=T,
+  pl=T,
+  m.fix = 1.5,
+  normalize = TRUE
+)
+
+summary(informed)
+
+diagnostic.mcmc(model=informed,col="grey50",cex=0.8)
+
+#summary plot for inferred abundances
+s1=HPDsummary(model=informed,data=qs,relative=FALSE)
+s1$summary
+s1$geneWise
+
+#Summary plot for fold-cahnges relative to the global control
+s0 <- HPDsummary(model=informed,data=qs,relative=TRUE)
+s0$summary
+#pairwise difference and their significance for each gene
+s0$geneWise
+
+#The last thing to do is estimate the variability in our control treatment (aposymbiotic). The mean of this group is set to zero because we are comparing the browns and the greens to the aposymbiotics. Technically the model accounts for the variability in this group, but I wanted to try and show the variability.
+
+#Convert the Ct values to transcript count values
+qs=cq2counts(data=data,genecols = gcol,condcols = ccol,effic = eff,Cq1=39)
+qs$tr=relevel(qs$tr,ref="G") #this time we set G or B as the control treatment. The credible intervals are larger when G is the control, so that is what I show here. 
+
+#Fitting a naive model without controls
+naive=mcmc.qpcr(
+  fixed="tr",
+  data=qs,
+  pr=T,
+  pl=T
+)
+
+summary(naive)
+
+diagnostic.mcmc(model=naive,col="grey50",cex=0.8)
+
+#summary plot for inferred abundances
+s2=HPDsummary(model=naive,data=qs,relative=FALSE)
+s2$summary
+
+#Summary plot for fold-cahnges relative to the global control
+s3=HPDsummary(model=naive,data=qs,relative=TRUE)
+s3$summary
+
+#pairwise difference and their significance for each gene
+s3$geneWise
+
+#Fitting a naive model with controls
+informed=mcmc.qpcr(
+  fixed="tr",
+  data=qs,
+  controls=c("g3pd","nadh"),
+  pr=T,
+  pl=T,
+  m.fix = 1.5,
+  normalize = TRUE
+)
+
+summary(informed)
+
+diagnostic.mcmc(model=informed,col="grey50",cex=0.8)
+
+#summary plot for inferred abundances
+s1=HPDsummary(model=informed,data=qs,relative=FALSE)
+s1$summary
+
+#Summary plot for fold-cahnges relative to the global control
+s0 <- HPDsummary(model=informed,data=qs,relative=TRUE)
+s0$summary
+
+#pairwise difference and their significance for each gene
+s0$geneWise
+
+#Now we will plot the abundance of each gene for each symbiotic state against its gene expression as a proxy for importance in the symbiosis. This data was compiled from the first informed model that we ran (with aposymbiotic as the control). 
+fcab <- read.csv("fc_ab.csv",header=TRUE) #fc_ab is an abbreviation for fold change and abundance.
+
+SymState_CAexpression_Foldchangeabundance <- ggplot(fcab,aes(x=mean.abundance,y=mean.fold.change))
+SymState_CAexpression_Foldchangeabundance <- SymState_CAexpression_Foldchangeabundance +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.major.y = element_line(color = "black"), 
+        axis.title.y = element_text(size = 12), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  labs(x = "Relative Abudance Log2 Scale", y = "Relative Expression Log2 Scale") +
+  scale_y_continuous(breaks=seq(-3.0,2.0,1.0)) +
+  scale_x_continuous(breaks=seq(1.0,9.0,1.0)) +
+  scale_color_manual(values=c("tan", "seagreen3", "sienna3")) +
+  scale_shape_manual(values=c(15, 16, 17, 18)) +
+  geom_errorbar(aes(ymin=mean.fold.change-sd.fold.change, ymax=mean.fold.change+sd.fold.change), width=.2) +
+  geom_errorbarh(aes(xmin=mean.abundance-sd.abundance, xmax=mean.abundance+sd.abundance), width=.2) +
+  geom_point(aes(color=tr,shape=gene,size=0.1))
+SymState_CAexpression_Foldchangeabundance
+```
+
+____________________________________________________________________________________________________________________________________
+
+This is the part of the script that analyzes the CA activity data from the size experiment.
+
+1. Anemone ID = ID
+
+2. Carbonic anhydrase value = CA
+
+3. Total soluble protein (mg/ml) = Protein
+
+4. CA Activity = CA.Activity
+
+5. Anemone Column Crown Diameter (size class) = Size
+
+6. Anemone Column Crown Diameter (mm) = Diameter
+
+7. logCA = logCA
+
+```{r Size CA Activity, include=TRUE}
+setwd("~/Documents/0_Oregon_State_University/1_Research/Anthopleura elegantissima/Carbonic Anhydrase/CA Manuscript/CA_Manuscript/R Files")
+
+#Load packages
+library("car")
+library("multcomp")
+library("grid")
+library("ggplot2")
+library("plotly")
+library("reshape2")
+library("gplots")
+library("FSA")
+library("lattice")
+library("rcompanion")
+library("multcompView")
+library("dplyr")
+library("Rmisc")
+library("graphics")
+
+#Load Data
+S <- read.csv("CAActivity_Size_Koch_CAManuscript.csv",header=TRUE)
+S$logCA <- log(S$CA.Activity) #calculate logCA
+S
+
+#Data Summary
+Summarize(CA.Activity~Size,data=S)
+
+#histograms
+histogram(~ CA.Activity, data = S)
+histogram(~ logCA, data = S) #logCA
+histogram(~ CA.Activity | Size,data=S,layout=c(1,3))
+histogram(~ logCA | Size,data=S,layout=c(1,3)) #logCA
+
+#Statistical Assumptions
+#Q-Q Plot (Normality)
+qqnorm(S$CA.Activity)
+qqline(S$CA.Activity)
+qqplot(S$CA.Activity,S$Size)
+
+shapiro.test(S$CA.Activity)
+shapiro.test(S$logCA)
+#not normal under either circumstance
+
+#log-transform
+leveneTest(logCA~Size, data = S)
+#Fail to reject null, p = 0.4124, variances equal
+
+
+#Levene's test for homogeneity of variance
+leveneTest(CA.Activity~Size, data = S)
+#Fail to reject null, p = 0.1172, variances equal
+
+#Using non-transformed data for stats
+
+#ANOVA
+saov <- aov(CA.Activity~Size,data=S)
+summary(saov)
+
+#Tukey's HSD
+TukeyHSD(saov)
+
+#Graphs
+levels(S$Size)
+S$Size2 <- factor(S$Size,levels=c("S","M","L"))
+plot.means <- function(x) {
+  m <- mean(x)
+  c(y = m, ymin = m, ymax = m)
+}
+
+#SizevCA
+S_CA <- subset(S, select = c(CA.Activity, Size2))
+p <- ggplot(S_CA, aes(x=Size2, y=CA.Activity))
+p + geom_dotplot(aes(fill = "sienna1"), 
+                 stackdir = "center", binaxis = "y", binwidth = 0.025, 
+                 stackratio = 1.5, position = "dodge", dotsize = 1.5) +
+  labs(x = "Column Crown Diameter Bin (S = 0-15mm, M = 15.1-30mm, L = >30mm)", y = "Carbonic Anhydrase Activity [-change ph/min/mg soluble animal protein]") +
+  guides(fill=FALSE) +
+  theme(axis.title.y = element_text(size = 15), axis.title.x = element_text(size = 15), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2.5,0.5)) +
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) +
+  annotate("text",x=2.8,y=2.75,label="ANOVA with Tukey HSD Post-hoc Analysis",size=5)
+
+#DvCA--Individual LoBF
+D_CA <- subset(S, select = c(CA.Activity, Size2, Diameter))
+p1 <- ggplot(D_CA, aes(x=Diameter, y=CA.Activity))
+p1 + geom_point(aes(colour=Size2)) +
+  labs(x = "Column Crown Diameter (mm)", y = "Carbonic Anhydrase Activity [-change ph/min/mg soluble animal protein]") +
+  guides(fill=FALSE) +
+  theme(axis.title.y = element_text(size = 15), axis.title.x = element_text(size = 15), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2.5,0.5)) +
+  scale_x_continuous(breaks=seq(0.0,50,5)) +
+  geom_smooth(aes(group = Size2), method="lm",size=1,se=T) #graphs individual linear models for each size class
+
+#DvCA--Global LoBF
+D_CA <- subset(S, select = c(CA.Activity, Size2, Diameter))
+#lm
+dvcalm <- lm(D_CA$CA.Activity~D_CA$Diameter)
+summary(dvcalm)
+#graph
+p2 <- ggplot(D_CA, aes(x=Diameter, y=CA.Activity))
+p2 + geom_point() +
+  labs(x = "Column Crown Diameter (mm)", y = "Carbonic Anhydrase Activity [-change ph/min/mg soluble animal protein]") +
+  guides(fill=FALSE) +
+  theme(axis.title.y = element_text(size = 15), axis.title.x = element_text(size = 15), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2.5,0.5)) +
+  scale_x_continuous(breaks=seq(0.0,50,5)) +
+  geom_smooth(method="lm",size=1,se=T) + #graphs linear model for entire dataset to show global trend
+  annotate("text",x=40,y=2.4,label="y = 1.829638x - 0.024790",size=5) +
+  annotate("text",x=40,y=2.32,label=" adj r^2 = 0.5424",size=5) +
+  annotate("text",x=40,y=2.24,label="p < 0.001",size=5)
+
+#Sizevprotein
+Sprot_CA <- subset(S, select = c(Protein, Size2))
+p4 <- ggplot(Sprot_CA, aes(x=Size2, y=Protein))
+p4 + geom_dotplot(aes(fill=as.factor(Size2)), 
+                 stackdir = "center", binaxis = "y", binwidth = 0.35, 
+                 stackratio = 1.5, position = "dodge") +
+  labs(x = "Column Crown Diameter Bin (S = 0-15mm, M = 15.1-30mm, L = >30mm)", y = "Soluble Animal Protein [mg]") +
+  guides(fill=FALSE) +
+  theme(axis.title.y = element_text(size = 15), axis.title.x = element_text(size = 15), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,30,5)) +
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) #shows that larger animals have more protein than smaller animals
+
+#Protein and Size Graph (same as last graph except as continuous data and with global linear model)
+D_Prot <- subset(S, select = c(Size2, Diameter,Protein))
+#lm
+dvprotlm <- lm(Diameter~Protein,data=D_Prot)
+summary(dvprotlm)
+#graph
+px <- ggplot(D_Prot, aes(x=Protein, y=Diameter))
+px + geom_point() +
+  labs(x = "Soluble Animal Protein (mg)", y = "Column Crown Diameter (mm)") +
+  guides(fill=FALSE) +
+  theme(axis.title.y = element_text(size = 15), axis.title.x = element_text(size = 15), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,55,5)) +
+  scale_x_continuous(breaks=seq(0.0,30,5)) +
+  geom_smooth(method="lm",size=1,se=T) +
+  annotate("text",x=22,y=10,label="y = 11.49214x + 1.43440",size=5) +
+  annotate("text",x=22,y=8,label=" adj r^2 = 0.836",size=5) +
+  annotate("text",x=22,y=6,label="p < 0.001",size=5)
+```
+
+____________________________________________________________________________________________________________________________________
+
+This is the part of the script that analyzes the CA activity data from the light experiment.
+
+1. Anemone ID = ID
+  
+  a. Breviolum containing = B
+  
+  b. Elliptochloris containing = G
+  
+  c. Aposymbiotic = W
+  
+  d. High light = HL
+  
+  e. Medium light = ML
+  
+  f. Darkness = LL
+  
+2. Carbonic anhydrase = CA
+
+3. Total soluble protein (mg/mL) = Protein
+
+4. Carbonic anhydrase activity = Ca.Activity
+
+5. Symbiotic state = Sym
+
+6. Light treatment = Light
+
+7. Symbiotic state light treatment = SL
+
+8. Start or End (day 0 [S] or 28 [E]) = SE
+
+9. Symbiotic state light treatment day = Comp
+
+10. Algal density (cells/mg protein) = Algae
+
+11. log CA = logCA
+
+```{r Light CA Activity, include=TRUE}
+setwd("~/Documents/0_Oregon_State_University/1_Research/Anthopleura elegantissima/Carbonic Anhydrase/CA Manuscript/CA_Manuscript/R Files")
+
+#Load Packages
+library("car")
+library("multcomp")
+library("grid")
+library("ggplot2")
+library("plotly")
+library("reshape2")
+library("gplots")
+library("FSA")
+library("lattice")
+library("rcompanion")
+library("multcompView")
+library("dplyr")
+library("Rmisc")
+library("graphics")
+
+#Load data
+Light <- read.csv("CAActivity_Light_Koch_CAManuscript.csv",header=TRUE)
+Light$logCA <- log(Light$Ca.Activity) #calculate logCA activity and add as new column
+Light$color[Light$Sym=="W"] <- "tan"
+Light$color[Light$Sym=="G"] <- "seagreen3"
+Light$color[Light$Sym=="B"] <- "sienna3"
+
+Light
+
+#Histogram
+histogram(~ Ca.Activity | Comp,data=Light)
+
+#t-tests
+
+plot.means <- function(x) {
+  m <- mean(x)
+  c(y = m, ymin = m, ymax = m)
+}
+
+#WLL (aposymbiotic darkness)
+#expect equal
+WLL <- filter(Light,SL=="WLL")
+WLL$Comp2 <- factor(WLL$Comp,levels=c("WLLS","WLLE"))
+leveneTest(Ca.Activity~Comp, data = WLL)
+#variance equal, p=0.2071, use non-transformed
+t.test(Ca.Activity~Comp,data=WLL,var.equal=TRUE)
+#pvalue 0.06684
+WLL$Comp2 <- factor(WLL$Comp2)
+WLLplot <- boxplot(Ca.Activity~Comp2,data=WLL,ylab="Carbonic Anhydrase Activity [-change pH/minute/mg soluble animal protein]")
+
+p1 <- ggplot(WLL, aes(x=Comp2, y=Ca.Activity))
+p1 <- p1 + 
+  #labs(y = " ") +
+  guides(fill=FALSE) +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2,0.5)) +
+  ylim(0,2)+
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) + 
+  geom_dotplot(dotsize = 3, stackdir = "center", 
+               binaxis = "y", 
+               binwidth = 0.025, 
+               stackratio = 1.5, 
+               position = "dodge", fill = "white")
+
+#WML
+#expect E to be greater
+WML <- filter(Light,SL=="WML")
+WML$Comp2 <- factor(WML$Comp,levels=c("WMLS","WMLE"))
+leveneTest(Ca.Activity~Comp, data = WML)
+#variance equal, p=0.1463, use non-transformed
+t.test(Ca.Activity~Comp,data=WML,alternative="greater",var.equal=TRUE)
+#pvalue=0.878
+WML$Comp <- factor(WML$Comp)
+WMLplot <- boxplot(Ca.Activity~Comp,data=WML,ylab="Carbonic Anhydrase Activity [-change pH/minute/mg soluble animal protein]")
+
+p2 <- ggplot(WML, aes(x=Comp2, y=Ca.Activity))
+p2 <- p2 + #labs(x = none, y = "Carbonic Anhydrase Activity [-change ph/min/mg soluble animal protein]") +
+  guides(fill=FALSE) +
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2,0.5)) +
+  ylim(0,2)+
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) + 
+  geom_dotplot(dotsize = 3, stackdir = "center", 
+               binaxis = "y", 
+               binwidth = 0.025, 
+               stackratio = 1.5, 
+               position = "dodge", fill = "white")
+
+
+#WHL
+#expect E to be greater
+WHL <- filter(Light,SL=="WHL")
+WHL$Comp2 <- factor(WHL$Comp,levels=c("WHLS","WHLE"))
+leveneTest(Ca.Activity~Comp, data = WHL)
+#variance equal, p=0.6878, use non-transformed data
+t.test(Ca.Activity~Comp,data=WHL,alternative="greater",var.equal=TRUE)
+#pvalue=0.7435
+WHL$Comp <- factor(WHL$Comp)
+WHLplot <- boxplot(Ca.Activity~Comp,data=WHL,ylab="Carbonic Anhydrase Activity [-change pH/minute/mg soluble animal protein]")
+
+p3 <- ggplot(WHL, aes(x=Comp2, y=Ca.Activity))
+p3 <- p3 + #labs(x = none, y = "Carbonic Anhydrase Activity [-change ph/min/mg soluble animal protein]") +
+  guides(fill=FALSE) +
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2,0.5)) +
+  ylim(0,2)+
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) + 
+  geom_dotplot(dotsize = 3, stackdir = "center",
+               binaxis = "y", 
+               binwidth = 0.025, 
+               stackratio = 1.5, 
+               position = "dodge", fill = "white")
+
+#GLL
+#expect E to be less
+GLL <- filter(Light,SL=="GLL")
+GLL$Comp2 <- factor(GLL$Comp,levels=c("GLLS","GLLE"))
+leveneTest(Ca.Activity~Comp, data = GLL)
+#variance equal, p=0.1069, use non-transformed data
+t.test(Ca.Activity~Comp,data=GLL,alternative="less",var.equal=TRUE)
+#pvalue < 0.01
+GLL$Comp <- factor(GLL$Comp)
+GLLplot <- boxplot(Ca.Activity~Comp2,data=GLL,ylab="Carbonic Anhydrase Activity [-change pH/minute/mg soluble animal protein]")
+
+p4 <- ggplot(GLL, aes(x=Comp2, y=Ca.Activity))
+p4 <- p4 + 
+  #labs(y = "Carbonic Anhydrase Activity [-change ph/min/mg soluble animal protein]") +
+  guides(fill=FALSE) +
+  theme(axis.title.x = element_blank(),axis.title.y = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2,0.5)) +
+  ylim(0,2)+
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) + 
+  geom_dotplot(dotsize = 3, stackdir = "center",
+               binaxis = "y", 
+               binwidth = 0.025, 
+               stackratio = 1.5, 
+               position = "dodge", fill = "seagreen3") +
+  annotate("text",x=0.7,y=0,label="*p-value < 0.01",size=3)
+
+#GML
+#expect equal
+GML <- filter(Light,SL=="GML")
+GML$Comp2 <- factor(GML$Comp,levels=c("GMLS","GMLE"))
+leveneTest(Ca.Activity~Comp, data = GML)
+#variance equal, p=0.6761, use non-transformed data
+t.test(Ca.Activity~Comp,data=GML,var.equal=TRUE)
+#pvalue=0.2188
+GML$Comp <- factor(GML$Comp)
+GMLplot <- boxplot(Ca.Activity~Comp2,data=GML,ylab="Carbonic Anhydrase Activity [-change pH/minute/mg soluble animal protein]")
+
+p5 <- ggplot(GML, aes(x=Comp2, y=Ca.Activity))
+p5 <- p5 + guides(fill=FALSE) +
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2,0.5)) +
+  ylim(0,2)+
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) + 
+  geom_dotplot(dotsize = 3, stackdir = "center",
+               binaxis = "y", 
+               binwidth = 0.025, 
+               stackratio = 1.5, 
+               position = "dodge", fill = "seagreen3")
+
+#GHL
+#expect E to be greater
+GHL <- filter(Light,SL=="GHL")
+GHL$Comp2 <- factor(GHL$Comp,levels=c("GHLS","GHLE"))
+leveneTest(Ca.Activity~Comp, data = GHL)
+#variance equal, p=0.5759, use non-transformed data
+t.test(Ca.Activity~Comp,data=GHL,alternative="greater",var.equal=TRUE)
+#pvalue=0.4963
+GHL$Comp <- factor(GHL$Comp)
+GHLplot <- boxplot(Ca.Activity~Comp2,data=GHL,ylab="Carbonic Anhydrase Activity [-change pH/minute/mg soluble animal protein]")
+
+p6 <- ggplot(GHL, aes(x=Comp2, y=Ca.Activity))
+p6 <- p6 + guides(fill=FALSE) +
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2,0.5)) +
+  ylim(0,2)+
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) + 
+  geom_dotplot(dotsize = 3, stackdir = "center",
+               binaxis = "y", 
+               binwidth = 0.025, 
+               stackratio = 1.5, 
+               position = "dodge", fill = "seagreen3")
+#check to see if outliers affect stats
+boxplot(Ca.Activity~Comp2,data=GHL) #show plot
+boxplot(Ca.Activity~Comp2,data=GHL)$out #show plot and write outliers in console
+outliers <- boxplot(Ca.Activity~Comp2,data=GHL)$out #write outliers to vector
+print(outliers) #check your vector
+GHL[which(GHL$Ca.Activity %in% outliers),] #ID the outlier rows
+GHLoutout <- GHL[-which(GHL$Ca.Activity %in% outliers),] #rename and remove outliers from dataset
+boxplot(Ca.Activity~Comp2,data=GHLoutout)
+leveneTest(Ca.Activity~Comp, data = GHLoutout)
+#variance equal, p=0.284, use non-transformed data
+t.test(Ca.Activity~Comp,data=GHLoutout,alternative="greater",var.equal=TRUE)
+#pvalue=0.9702
+#outlier does not affect stats, mention this
+
+#BLL
+#expect E to be less
+BLL <- filter(Light,SL=="BLL")
+BLL$Comp2 <- factor(BLL$Comp,levels=c("BLLS","BLLE"))
+leveneTest(Ca.Activity~Comp, data = BLL)
+#variance equal, p=0.684, use non-transformed data
+t.test(Ca.Activity~Comp,data=BLL,alternative="less",var.equal=TRUE)
+#pvalue = 0.1358
+BLL$Comp <- factor(BLL$Comp)
+BLLplot <- boxplot(Ca.Activity~Comp,data=BLL,ylab="Carbonic Anhydrase Activity [-change pH/minute/mg soluble animal protein]")
+
+p7 <- ggplot(BLL, aes(x=Comp2, y=Ca.Activity))
+p7 <- p7 + guides(fill=FALSE) +
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2,0.5)) +
+  ylim(0,2)+
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) + 
+  geom_dotplot(dotsize = 3, stackdir = "center",
+               binaxis = "y", 
+               binwidth = 0.025, 
+               stackratio = 1.5, 
+               position = "dodge", fill = "sienna3")
+#check to see if outliers affect stats
+boxplot(Ca.Activity~Comp2,data=BLL) #show plot
+boxplot(Ca.Activity~Comp2,data=BLL)$out #show plot and write outliers in console
+outliers2 <- boxplot(Ca.Activity~Comp2,data=BLL)$out #write outliers to vector
+print(outliers2) #check your vector
+BLL[which(BLL$Ca.Activity %in% outliers2),] #ID the outlier rows
+BLLoutout <- BLL[-which(BLL$Ca.Activity %in% outliers2),] #rename and remove outliers from dataset
+boxplot(Ca.Activity~Comp2,data=BLLoutout)
+leveneTest(Ca.Activity~Comp, data = BLLoutout)
+#variance unequal, p=0.02787, transform?
+t.test(Ca.Activity~Comp,data=BLLoutout,alternative="less",var.equal=FALSE)
+#pvalue=0.0001
+#try log transformed data?
+leveneTest(logCA~Comp, data = BLLoutout)
+#variance unequal, p=0.291, use log CA
+t.test(logCA~Comp,data=BLLoutout,alternative="less",var.equal=TRUE)
+#pvalue=2.509e-05
+#outlier does affect stats, mention this
+
+#BML
+#expect E to be less
+BML <- filter(Light,SL=="BML")
+BML$Comp2 <- factor(BML$Comp,levels=c("BMLS","BMLE"))
+leveneTest(Ca.Activity~Comp, data = BML)
+#variance equal, p=0.7545
+t.test(Ca.Activity~Comp,data=BML,alternative="less",var.equal=TRUE)
+#pvalue = 0.1626
+BML$Comp <- factor(BML$Comp)
+BMLplot <- boxplot(Ca.Activity~Comp,data=BML,ylab="Carbonic Anhydrase Activity [-change pH/minute/mg soluble animal protein]")
+
+p8 <- ggplot(BML, aes(x=Comp2, y=Ca.Activity))
+p8 <- p8 + 
+  #labs(x = "Symbiotic State, Light Level, Time Point") +
+  guides(fill=FALSE) +
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2,0.5)) +
+  ylim(0,2)+
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) + 
+  geom_dotplot(dotsize = 3, stackdir = "center", 
+               binaxis = "y", 
+               binwidth = 0.025, 
+               stackratio = 1.5, 
+               position = "dodge", fill = "sienna3")
+
+#BHL############
+#expect equal
+BHL <- filter(Light,SL=="BHL")
+BHL$Comp2 <- factor(BHL$Comp,levels=c("BHLS","BHLE"))
+leveneTest(Ca.Activity~Comp, data = BHL)
+#variance equal, p=0.2664, use non-transformed data
+t.test(Ca.Activity~Comp,data=BHL,var.equal=TRUE)
+#pvalue = 0.21
+BHL$Comp <- factor(BHL$Comp)
+BHLplot <- boxplot(Ca.Activity~Comp,data=BHL,ylab="Carbonic Anhydrase Activity [-change pH/minute/mg soluble animal protein]")
+
+p9 <- ggplot(BHL, aes(x=Comp2, y=Ca.Activity))
+p9 <- p9 + guides(fill=FALSE) +
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,2,0.5)) +
+  ylim(0,2)+
+  stat_summary(fun.data="plot.means", geom = "errorbar", colour="red", width=0.3, size =1) + 
+  geom_dotplot(dotsize = 3, stackdir = "center", 
+               binaxis = "y", 
+               binwidth = 0.025, 
+               stackratio = 1.5, 
+               position = "dodge", fill = "sienna3")
+
+multiplot(p1,p4,p7,p2,p5,p8,p3,p6,p9,cols=3)
+
+#graph CA activity against algal density
+Light_A <- subset(Light, select = c(Ca.Activity, Algae, Sym)) #subset data
+Light_A <- na.omit(Light_A) #remove NA rows (there was one that I couldn't figure out how else to remove and it was messing things up downstream)
+Light_B <- subset(Light_A, Sym == "B" | Sym == "G") #subset brown and green data
+Light_W <- subset(Light_A, Sym == "W") #subset aposymbiotic data
+p1 <- ggplot(Light_B,aes(x=Algae,y=Ca.Activity)) 
+p1 + geom_point(aes(color=Sym)) + #plot brown and green data
+  geom_smooth(aes(group = Sym), method="lm",size=1,se=T) + #add linear models for white and green data
+  geom_point(data = Light_W, color="tan") + #plot aposymbiotic data
+  scale_colour_manual(values=c("sienna3", "seagreen3")) +
+  labs(x = "Algal Density [cells/mg soluble animal protein]", y = "Carbonic Anhydrase Activity [-change ph/min/mg soluble animal protein]") +
+  guides(fill=FALSE) +
+  theme(axis.title.y = element_text(size = 12), panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.text.x = element_text(size = rel(2)), 
+        axis.text.y = element_text(size = rel(2))) +
+  scale_y_continuous(breaks=seq(0.0,1.8,0.2))
+```
