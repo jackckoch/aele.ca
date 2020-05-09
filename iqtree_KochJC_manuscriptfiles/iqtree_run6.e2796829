@@ -1,9 +1,0 @@
- 	Full Command:                      /nfs0/IB/Weis_Lab/kochja/happy_bin/iqtree-1.6.10-Linux/bin/iqtree -s namedCA_Manuscript_excludeRogues.phy -b 1000 -nt AUTO -ntmax 16 -mem 200G 
-	Memory (kb):                       129948 
-	# SWAP  (freq):                    0 
-	# Waits (freq):                    1968160 
-	CPU (percent):                     683% 
-	Time (seconds):                    424471.97 
-	Time (hh:mm:ss.ms):                117:54:31 
-	System CPU Time (seconds):         33066.57 
-	User   CPU Time (seconds):         2868157.34 
